@@ -34,3 +34,4 @@ This project was developed with the assistance of Cursor IDE. The assistant help
 
 - The design is not an exact replica of the Figma file provided, as dev mode was not available, which limited access to exact design specifications like font sizes.
 - The search and file directory functionalities were not implemented due to the lack of appropriate APIs and time constraints.
+- The API base URL is currently hardcoded but can be moved to an environment variable; this was considered out of scope for this assignment.
