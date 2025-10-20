@@ -2,7 +2,7 @@ import { Download } from "lucide-react";
 
 export function Header() {
   return (
-    <header className="bg-background sticky top-0 flex h-16 shrink-0 items-center gap-2 border-b px-4">
+    <header className="bg-background sticky top-0 flex h-16 shrink-0 items-center gap-2 border-b px-4 z-10">
       <div className="container mx-auto px-4">
         <div className="flex justify-between items-center h-16">
           <div className="flex items-center space-x-2">

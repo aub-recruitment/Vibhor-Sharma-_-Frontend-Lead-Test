@@ -11,33 +11,60 @@ export interface ApiErrorResponse {
   message?: string;
 }
 
-export interface UseApiQueryProps<T> {
+type ApiResponse<T> = {
+  data: T;
+  headers: Record<string, string>;
+};
+
+type QueryReturnType<
+  T,
+  IncludeHeaders extends boolean
+> = IncludeHeaders extends true ? ApiResponse<T> : T;
+
+export interface UseApiQueryProps<T, IncludeHeaders extends boolean = false> {
   key: QueryKey;
   url: string;
   enabled?: boolean;
+  includeHeaders?: IncludeHeaders;
   options?: Partial<
-    UseQueryOptions<T, AxiosError<ApiErrorResponse>, T, QueryKey>
+    UseQueryOptions<
+      QueryReturnType<T, IncludeHeaders>,
+      AxiosError<ApiErrorResponse>,
+      QueryReturnType<T, IncludeHeaders>,
+      QueryKey
+    >
   >;
   axiosConfig?: Parameters<typeof axios.get>[1];
   onError?: (error: AxiosError<ApiErrorResponse>) => void;
 }
 
-export function useApiQuery<T>({
+export function useApiQuery<T, IncludeHeaders extends boolean = false>({
   key,
   url,
   options,
   enabled,
+  includeHeaders,
   axiosConfig,
   onError
-}: UseApiQueryProps<T>) {
-  const result = useQuery<T, AxiosError<ApiErrorResponse>>({
+}: UseApiQueryProps<T, IncludeHeaders>) {
+  const result = useQuery<
+    QueryReturnType<T, IncludeHeaders>,
+    AxiosError<ApiErrorResponse>
+  >({
     ...options,
     queryKey: key,
     queryFn: async () => {
       const res = await axios.get<T>(url, {
         ...axiosConfig
       });
-      return res.data;
+      return (
+        includeHeaders
+          ? {
+              data: res.data,
+              headers: res.headers as Record<string, string>
+            }
+          : res.data
+      ) as QueryReturnType<T, IncludeHeaders>;
     },
     enabled
   });

@@ -32,6 +32,7 @@ import useLocalStorage from "@/hooks/useLocalStorage";
 import { TableSkeleton } from "@/components/TableSkeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { Link } from "@tanstack/react-router";
+import { useDebounce } from "use-debounce";
 
 type ApiPackage = {
   type: string;
@@ -77,7 +78,7 @@ export const Route = createLazyFileRoute("/packages/")({
   component: Packages
 });
 
-type SortKey = "name" | "hits" | "bandwidth" | "hitsChange" | "bandwidthChange";
+type SortKey = "hits" | "bandwidth";
 
 const initialFilters: Filters = {
   minHits: "",
@@ -100,12 +101,14 @@ function Packages() {
   const [sortConfig, setSortConfig] = useState<{
     key: SortKey;
     direction: "asc" | "desc";
-  } | null>(null);
+  } | null>({ key: "hits", direction: "desc" });
+
+  const [debouncedSearch] = useDebounce(search, 500);
 
   const handleClearFilter = (filterKey: keyof Filters) => {
     setFilters({
       ...filters,
-      [filterKey]: initialFilters[filterKey]
+      [filterKey]: initialFilters[filterKey as keyof Filters]
     });
   };
 
@@ -127,16 +130,37 @@ function Packages() {
           : filters.period;
 
   const apiUrl = "https://data.jsdelivr.com/v1/stats/packages";
-  const urlWithParams = apiPeriod ? `${apiUrl}?period=${apiPeriod}` : apiUrl;
+  const urlWithParams = new URL(apiUrl);
+  if (apiPeriod) urlWithParams.searchParams.set("period", apiPeriod);
+
+  // Only add pagination and sorting if there is no search query
+  if (!debouncedSearch) {
+    if (sortConfig) {
+      urlWithParams.searchParams.set("by", sortConfig.key);
+      urlWithParams.searchParams.set("order", sortConfig.direction);
+    }
+    urlWithParams.searchParams.set("page", String(page));
+    urlWithParams.searchParams.set("limit", String(pageSize));
+  }
 
   const {
-    data: rawData,
+    data: response,
     isLoading,
     error
-  } = useApiQuery<ApiPackage[]>({
-    key: ["packages", apiPeriod || "default"],
-    url: urlWithParams
+  } = useApiQuery<ApiPackage[], true>({
+    key: [
+      "packages",
+      apiPeriod,
+      debouncedSearch ? null : sortConfig,
+      debouncedSearch ? null : page,
+      debouncedSearch ? null : pageSize
+    ],
+    url: urlWithParams.toString(),
+    includeHeaders: true
   });
+
+  const rawData = response?.data;
+  const totalPages = Number(response?.headers["x-total-pages"] || 1);
 
   const data = useMemo(() => {
     if (!rawData) return [];
@@ -169,74 +193,56 @@ function Packages() {
     });
   }, [rawData]);
 
-  const sortedAndFilteredData = useMemo(() => {
-    let result = data || [];
-    if (search) {
-      result = result.filter((pkg) =>
-        pkg.name.toLowerCase().includes(search.toLowerCase())
-      );
+  const filteredData = useMemo(() => {
+    if (!debouncedSearch) return data;
+    return (
+      data?.filter((pkg) =>
+        pkg.name.toLowerCase().includes(debouncedSearch.toLowerCase())
+      ) || []
+    );
+  }, [data, debouncedSearch]);
+
+  const sortedData = useMemo(() => {
+    if (debouncedSearch) {
+      const result = [...filteredData];
+      if (sortConfig) {
+        result.sort((a, b) => {
+          let aValue: string | number;
+          let bValue: string | number;
+          switch (sortConfig.key) {
+            case "hits":
+              aValue = a.hits.total;
+              bValue = b.hits.total;
+              break;
+            case "bandwidth":
+              aValue = a.bandwidth.total;
+              bValue = b.bandwidth.total;
+              break;
+            default:
+              aValue = 0;
+              bValue = 0;
+          }
+          if (aValue < bValue) return sortConfig.direction === "asc" ? -1 : 1;
+          if (aValue > bValue) return sortConfig.direction === "asc" ? 1 : -1;
+          return 0;
+        });
+      }
+      return result;
     }
-
-    const minHits = parseFloat(filters.minHits);
-    if (!Number.isNaN(minHits)) {
-      result = result.filter(
-        (pkg) => pkg.hits.total / 1_000_000_000 >= minHits
-      );
-    }
-
-    const minBandwidth = parseFloat(filters.minBandwidth);
-    if (!Number.isNaN(minBandwidth)) {
-      result = result.filter(
-        (pkg) => pkg.bandwidth.total / 1_000_000_000 >= minBandwidth
-      );
-    }
-
-    if (sortConfig !== null) {
-      result.sort((a, b) => {
-        let aValue: string | number;
-        let bValue: string | number;
-
-        switch (sortConfig.key) {
-          case "hits":
-            aValue = a.hits.total;
-            bValue = b.hits.total;
-            break;
-          case "bandwidth":
-            aValue = a.bandwidth.total;
-            bValue = b.bandwidth.total;
-            break;
-          case "hitsChange":
-            aValue = a.hits.change ?? 0;
-            bValue = b.hits.change ?? 0;
-            break;
-          case "bandwidthChange":
-            aValue = a.bandwidth.change ?? 0;
-            bValue = b.bandwidth.change ?? 0;
-            break;
-          default: // name
-            aValue = a.name;
-            bValue = b.name;
-        }
-
-        if (aValue < bValue) {
-          return sortConfig.direction === "asc" ? -1 : 1;
-        }
-        if (aValue > bValue) {
-          return sortConfig.direction === "asc" ? 1 : -1;
-        }
-        return 0;
-      });
-    }
-    return result;
-  }, [data, search, sortConfig, filters]);
+    return filteredData;
+  }, [filteredData, sortConfig, debouncedSearch]);
 
   const paginatedData = useMemo(() => {
-    const start = (page - 1) * pageSize;
-    const end = start + pageSize;
-    return sortedAndFilteredData.slice(start, end);
-  }, [sortedAndFilteredData, page, pageSize]);
+    if (debouncedSearch) {
+      const start = (page - 1) * pageSize;
+      return sortedData.slice(start, start + pageSize);
+    }
+    return sortedData;
+  }, [sortedData, page, pageSize, debouncedSearch]);
 
-  const totalPages = Math.ceil(sortedAndFilteredData.length / pageSize);
+  const displayTotalPages = debouncedSearch
+    ? Math.ceil(sortedData.length / pageSize)
+    : totalPages;
 
   const requestSort = (key: SortKey) => {
     let direction: "asc" | "desc" = "asc";
@@ -261,28 +267,25 @@ function Packages() {
     );
   };
 
-  if (isLoading) return <TableSkeleton />;
-  if (error) return <div>Error: {error.message}</div>;
-
   return (
     <div className="container mx-auto p-4 space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold">GitHub Packages list</h1>
-        <p className="text-muted-foreground">
-          Explore information about different packages
-        </p>
-      </div>
-      <div className="flex justify-between items-center">
-        <div className="relative w-full max-w-sm">
-          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search"
-            className="pl-8"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+      <div className="flex justify-between items-center flex-wrap lg:flex-nowrap gap-4">
+        <div>
+          <h1 className="text-2xl font-bold">GitHub Packages list</h1>
+          <p className="text-muted-foreground">
+            Explore information about different packages
+          </p>
         </div>
         <div className="flex items-center space-x-2">
+          <div className="relative w-full max-w-sm">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search"
+              className="pl-8"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
           <Button variant="outline" onClick={() => setIsSidebarOpen(true)}>
             <Filter className="mr-2 h-4 w-4" /> Filter
           </Button>
@@ -343,66 +346,71 @@ function Packages() {
         </div>
       )}
       <div className="border rounded-md">
-        {paginatedData.length > 0 ? (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead onClick={() => requestSort("name")}>
-                  Name {getSortIcon("name")}
-                </TableHead>
-                <TableHead onClick={() => requestSort("hits")}>
-                  Hits (Billions) {getSortIcon("hits")}
-                </TableHead>
-                <TableHead onClick={() => requestSort("bandwidth")}>
-                  Bandwidth (GBs) {getSortIcon("bandwidth")}
-                </TableHead>
-                <TableHead onClick={() => requestSort("hitsChange")}>
-                  Hits Change {getSortIcon("hitsChange")}
-                </TableHead>
-                <TableHead onClick={() => requestSort("bandwidthChange")}>
-                  Bandwidth Change {getSortIcon("bandwidthChange")}
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {paginatedData.map((pkg) => (
-                <TableRow key={pkg.name}>
-                  <TableCell className="font-medium">
-                    <Link
-                      to="/packages/$packageName"
-                      params={{ packageName: pkg.name }}
-                      search={{ type: pkg.type }}
-                    >
-                      {pkg.name}
-                    </Link>
-                  </TableCell>
-                  <TableCell>
-                    {(pkg.hits.total / 1_000_000_000).toLocaleString(
-                      undefined,
-                      { maximumFractionDigits: 2 }
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {(pkg.bandwidth.total / 1_000_000_000).toLocaleString(
-                      undefined,
-                      { maximumFractionDigits: 2 }
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <PercentageChange value={pkg.hits.change} />
-                  </TableCell>
-                  <TableCell>
-                    <PercentageChange value={pkg.bandwidth.change} />
-                  </TableCell>
+        {isLoading ? (
+          <TableSkeleton />
+        ) : error ? (
+          <div className="p-4 text-center text-red-500">
+            Error: {error.message}
+          </div>
+        ) : data.length > 0 ? (
+          <div className="overflow-hidden rounded-md border">
+            <Table>
+              <TableHeader className="bg-table-header-bg">
+                <TableRow className="*:border-border hover:bg-transparent [&>:not(:last-child)]:border-r">
+                  <TableHead>Name</TableHead>
+                  <TableHead onClick={() => requestSort("hits")}>
+                    Hits (Billions) {getSortIcon("hits")}
+                  </TableHead>
+                  <TableHead onClick={() => requestSort("bandwidth")}>
+                    Bandwidth (GBs) {getSortIcon("bandwidth")}
+                  </TableHead>
+                  <TableHead>Hits Change</TableHead>
+                  <TableHead>Bandwidth Change</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {paginatedData.map((pkg) => (
+                  <TableRow
+                    key={pkg.name}
+                    className="*:border-border hover:bg-transparent [&>:not(:last-child)]:border-r"
+                  >
+                    <TableCell className="font-medium">
+                      <Link
+                        to="/packages/$packageName"
+                        params={{ packageName: pkg.name }}
+                        search={{ type: pkg.type }}
+                      >
+                        {pkg.name}
+                      </Link>
+                    </TableCell>
+                    <TableCell>
+                      {(pkg.hits.total / 1_000_000_000).toLocaleString(
+                        undefined,
+                        { maximumFractionDigits: 2 }
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {(pkg.bandwidth.total / 1_000_000_000).toLocaleString(
+                        undefined,
+                        { maximumFractionDigits: 2 }
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <PercentageChange value={pkg.hits.change} />
+                    </TableCell>
+                    <TableCell>
+                      <PercentageChange value={pkg.bandwidth.change} />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
         ) : (
           <EmptyState />
         )}
       </div>
-      {paginatedData.length > 0 && (
+      {!isLoading && !error && data.length > 0 && (
         <div className="flex items-center justify-end space-x-2 py-4">
           <Button
             variant="outline"
@@ -422,20 +430,22 @@ function Packages() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {Array.from({ length: totalPages }, (_, i) => (
+                {Array.from({ length: displayTotalPages }, (_, i) => (
                   <SelectItem key={`page-${i + 1}`} value={String(i + 1)}>
                     {i + 1}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            <span>of {totalPages}</span>
+            <span>of {displayTotalPages}</span>
           </div>
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setPage((prev) => Math.min(prev + 1, totalPages))}
-            disabled={page === totalPages}
+            onClick={() =>
+              setPage((prev) => Math.min(prev + 1, displayTotalPages))
+            }
+            disabled={page === displayTotalPages}
           >
             Next
           </Button>

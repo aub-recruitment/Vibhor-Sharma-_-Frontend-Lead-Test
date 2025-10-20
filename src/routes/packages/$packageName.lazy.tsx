@@ -1,16 +1,14 @@
 import { createLazyFileRoute, useSearch } from "@tanstack/react-router";
-import {
-  ArrowDownToLine,
-  ArrowUpRightFromSquare,
-  Book,
-  Heart,
-  Share2,
-  ArrowUp,
-  ArrowDown
-} from "lucide-react";
+import { Book, Heart, Share2 } from "lucide-react";
 import { useApiQuery } from "@/hooks/useApiQuery";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle
+} from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -22,28 +20,39 @@ import {
 import {
   ChartContainer,
   ChartTooltip,
-  ChartTooltipContent
+  ChartTooltipContent,
+  ChartLegend
 } from "@/components/ui/chart";
-import { Area, AreaChart, CartesianGrid, XAxis } from "recharts";
-import { useMemo } from "react";
+import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
+import { useMemo, type ReactNode } from "react";
+import { PackageDetailsSkeleton } from "@/components/PackageDetailsSkeleton";
+import dayjs from "dayjs";
+import relativeTime from "dayjs/plugin/relativeTime";
+import type { ValueType } from "recharts/types/component/DefaultTooltipContent";
+import { Badge } from "@/components/ui/badge";
+import { TbDownload } from "react-icons/tb";
+import { HiMiniArrowsUpDown, HiMiniArrowUp } from "react-icons/hi2";
 
-// Types based on jsDelivr API
+dayjs.extend(relativeTime);
+type StatDetails = {
+  rank?: number;
+  typeRank?: number;
+  total: number;
+  dates: Record<string, number>;
+  prev?: {
+    rank?: number;
+    typeRank?: number;
+    total: number;
+  };
+};
+
 type PackageStats = {
-  hits: {
-    total: number;
-    prev: { total: number };
-  };
-  bandwidth: {
-    total: number;
-    prev: { total: number };
-  };
-  versions: Record<string, { hits: number; bandwidth: number }>;
-  dates: Record<string, { hits: number; bandwidth: number }>;
-  tags: Record<string, string>;
+  hits: StatDetails;
+  bandwidth: StatDetails;
 };
 
 type PackageVersionStat = {
-  type: "version";
+  type: string;
   version: string;
   hits: {
     total: number;
@@ -61,10 +70,18 @@ type PackageVersionStat = {
 
 type PackageVersionStats = PackageVersionStat[];
 
-type PackageMetadata = {
+type NpmPackageMetadata = {
   tags: Record<string, string>;
   versions: string[];
 };
+type GhPackageTag = {
+  commit: { sha: string; date: string };
+};
+type GhPackageMetadata = {
+  tags: Record<string, GhPackageTag>;
+  versions: string[];
+};
+type PackageMetadata = NpmPackageMetadata | GhPackageMetadata;
 
 type NpmData = {
   time: Record<string, string>;
@@ -74,58 +91,54 @@ type NpmData = {
 const StatCard = ({
   title,
   value,
-  change,
-  icon: Icon,
+  icon,
   unit
 }: {
   title: string;
-  value: string;
-  change: number | null;
-  icon: React.ElementType;
-  unit: string;
+  value: React.ReactNode;
+  icon: ReactNode;
+  unit?: string;
 }) => {
-  const isPositive = change != null && change >= 0;
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium">{title}</CardTitle>
-        <Icon className="h-4 w-4 text-muted-foreground" />
-      </CardHeader>
       <CardContent>
-        <div className="text-2xl font-bold">
-          {value}
-          {unit}
+        <div className="flex gap-2">
+          <div>{icon}</div>
+          <div>
+            <div className="text-sm font-medium text-gray-400">{title}</div>
+            <div className="text-xl font-bold">
+              {value}
+              {unit}
+            </div>
+          </div>
         </div>
-        {change != null ? (
-          <p
-            className={`text-xs ${
-              isPositive ? "text-green-600" : "text-red-600"
-            }`}
-          >
-            {isPositive ? "+" : ""}
-            {change.toFixed(2)}%
-          </p>
-        ) : (
-          <p className="text-xs text-muted-foreground">-</p>
-        )}
       </CardContent>
     </Card>
   );
 };
 
-function relativeDate(past: Date, now: Date): string {
-  const diffMs = now.getTime() - past.getTime();
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-  if (diffDays < 1) return "Today";
-  if (diffDays < 7) return `${diffDays} days ago`;
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
-  if (diffDays < 365) return `${Math.floor(diffDays / 30)} months ago`;
-  return `${Math.floor(diffDays / 365)} years ago`;
+function relativeDate(past: Date): string {
+  return dayjs(past).fromNow();
 }
 
 export const Route = createLazyFileRoute("/packages/$packageName")({
   component: PackageDetails
+});
+
+const chartConfig = {
+  hits: {
+    label: "Hits",
+    color: "#8C96FC"
+  },
+  bandwidthInGB: {
+    label: "Bandwidth (GB)",
+    color: "#B774FC"
+  }
+};
+
+const compactNumberFormatter = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  compactDisplay: "short"
 });
 
 function PackageDetails() {
@@ -133,7 +146,7 @@ function PackageDetails() {
   const search = useSearch({ from: "/packages/$packageName" });
 
   const type = search?.type || "npm";
-  const now = new Date("2025-10-19");
+  const isGh = type === "gh";
 
   const { data: stats, isLoading: isLoadingStats } = useApiQuery<PackageStats>({
     key: ["packageStats", packageName],
@@ -169,59 +182,40 @@ function PackageDetails() {
     return map;
   }, [weekStats]);
 
-  console.log(
-    "%csrc/routes/packages/$packageName.lazy.tsx:106 stats",
-    "color: #007acc;",
-    stats
-  );
-
-  console.log(
-    "%csrc/routes/packages/$packageName.lazy.tsx:114 metadata",
-    "color: #007acc;",
-    metadata
-  );
-
   const { hitsChange, bandwidthChange } = useMemo(() => {
-    if (!stats) {
+    if (!stats?.hits?.prev || !stats?.bandwidth?.prev)
       return { hitsChange: null, bandwidthChange: null };
-    }
 
     const hitsChange =
-      stats.hits.prev.total > 0
+      stats.hits.prev.total !== 0
         ? ((stats.hits.total - stats.hits.prev.total) / stats.hits.prev.total) *
           100
-        : stats.hits.total > 0
-          ? 100
-          : 0;
+        : 0;
 
     const bandwidthChange =
-      stats.bandwidth.prev.total > 0
+      stats.bandwidth.prev.total !== 0
         ? ((stats.bandwidth.total - stats.bandwidth.prev.total) /
             stats.bandwidth.prev.total) *
           100
-        : stats.bandwidth.total > 0
-          ? 100
-          : 0;
+        : 0;
 
     return { hitsChange, bandwidthChange };
   }, [stats]);
 
-  const chartData = useMemo(
-    () =>
-      Object.entries(stats?.dates || {})
-        .map(([date, data]) => ({
-          date: new Date(date).toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric"
-          }),
-          hits: data.hits,
-          bandwidth: data.bandwidth
-        }))
-        .sort(
-          (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
-        ),
-    [stats]
-  );
+  const chartData = useMemo(() => {
+    if (!stats?.hits?.dates) return [];
+
+    const hitsDates = stats.hits.dates;
+    const bandwidthDates = stats.bandwidth.dates || {};
+
+    return Object.keys(hitsDates)
+      .map((date) => ({
+        date: new Date(date),
+        hits: hitsDates[date],
+        bandwidthInGB: bandwidthDates[date] || 0
+      }))
+      .sort((a, b) => a.date.getTime() - b.date.getTime());
+  }, [stats]);
 
   if (
     isLoadingStats ||
@@ -229,10 +223,10 @@ function PackageDetails() {
     isLoadingMetadata ||
     (type === "npm" && isLoadingNpm)
   ) {
-    return <div>Loading...</div>; // Replace with a skeleton loader later
+    return <PackageDetailsSkeleton />;
   }
 
-  if (!stats || !weekStats || !metadata || (type === "npm" && !npmData)) {
+  if (!stats || !weekStats || !metadata || (!isGh && !npmData)) {
     return <div>Package not found.</div>;
   }
 
@@ -240,16 +234,23 @@ function PackageDetails() {
     <div className="container mx-auto p-4 space-y-6">
       <Card>
         <CardContent className="p-6">
-          <div className="flex justify-between items-start">
-            <div>
-              <h1 className="text-3xl font-bold">{packageName}</h1>
-              <p className="text-muted-foreground">
-                Download description for downloading {packageName}
-              </p>
+          <div className="flex justify-between items-start flex-wrap lg:flex-nowrap gap-4">
+            <div className="flex gap-4">
+              <div className="w-14 h-14 bg-[#8C96FC] rounded-md"></div>
+              <div className="flex flex-col gap-2">
+                <h1 className="text-lg lg:text-xl font-bold">{packageName}</h1>
+                <div className="flex items-center gap-2">
+                  <Badge>{type === "npm" ? "npm" : "GitHub"}</Badge>
+                  <div className="text-sm">v{weekStats?.[0]?.version}</div>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Download description for downloading {packageName}
+                </p>
+              </div>
             </div>
-            <div className="flex space-x-2">
+            <div className="flex space-x-2 flex-wrap lg:flex-nowrap gap-4">
               <Button variant="outline">
-                <Heart className="mr-2 h-4 w-4" /> Favourite
+                <Heart className="mr-2 h-4 w-4" /> Favorite
               </Button>
               <Button variant="outline">
                 <Share2 className="mr-2 h-4 w-4" /> Share
@@ -262,62 +263,119 @@ function PackageDetails() {
           <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <StatCard
               title="HITS"
-              value={(stats.hits.total / 1_000_000_000).toFixed(2)}
-              unit="B"
-              change={hitsChange}
-              icon={ArrowDownToLine}
+              value={`${(stats.hits.total / 1_000_000_000).toFixed(2)}B`}
+              icon={<TbDownload size={30} className="text-[#555BFF]" />}
             />
             <StatCard
               title="BANDWIDTH"
               value={(stats.bandwidth.total / 1_000_000_000).toFixed(2)}
               unit="GB"
-              change={bandwidthChange}
-              icon={ArrowUpRightFromSquare}
+              icon={<HiMiniArrowsUpDown size={30} className="text-[#555BFF]" />}
             />
             <StatCard
               title="HITS CHANGE"
-              value=""
-              unit=""
-              change={hitsChange}
-              icon={ArrowUp}
+              value={
+                hitsChange === null ? (
+                  <span>-</span>
+                ) : (
+                  <span
+                    className={
+                      hitsChange === null
+                        ? ""
+                        : hitsChange > 0
+                          ? "text-green-600"
+                          : "text-red-600"
+                    }
+                  >
+                    {bandwidthChange > 0 ? "+" : ""}
+                    {hitsChange?.toFixed(2)}%
+                  </span>
+                )
+              }
+              icon={<HiMiniArrowUp size={30} className="text-[#84CC16]" />}
             />
             <StatCard
               title="BANDWIDTH CHANGE"
-              value=""
-              unit=""
-              change={bandwidthChange}
-              icon={ArrowDown}
+              value={
+                bandwidthChange === null ? (
+                  <span>-</span>
+                ) : (
+                  <span
+                    className={
+                      bandwidthChange === null
+                        ? ""
+                        : bandwidthChange > 0
+                          ? "text-green-600"
+                          : bandwidthChange < 0
+                            ? "text-red-600"
+                            : ""
+                    }
+                  >
+                    {bandwidthChange > 0 ? "+" : ""}
+                    {bandwidthChange?.toFixed(2)}%
+                  </span>
+                )
+              }
+              icon={<HiMiniArrowsUpDown size={30} className="text-[#8C96FC]" />}
             />
           </div>
         </CardContent>
       </Card>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 space-y-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="lg:col-span-1 space-y-6">
           <Card>
             <CardHeader>
               <CardTitle>Current tags</CardTitle>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Version</TableHead>
-                    <TableHead>Downloads (Last 7 days)</TableHead>
-                    <TableHead>Tag</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {Object.entries(metadata.tags || {}).map(([tag, version]) => (
-                    <TableRow key={tag}>
-                      <TableCell>{version}</TableCell>
-                      <TableCell>
-                        {(versionHitsMap.get(version) ?? 0).toLocaleString()}
-                      </TableCell>
-                      <TableCell>{tag}</TableCell>
+              <div className="overflow-hidden rounded-md border">
+                <Table>
+                  <TableHeader className="bg-table-header-bg">
+                    <TableRow>
+                      <TableHead>Version</TableHead>
+                      <TableHead>Downloads (Last 7 days)</TableHead>
+                      <TableHead>Tag</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {isGh
+                      ? Object.entries(
+                          (metadata as GhPackageMetadata).tags || {}
+                        )
+                          .slice(0, 5)
+                          .map(([tagName]) => (
+                            <TableRow key={tagName}>
+                              <TableCell>{tagName}</TableCell>
+                              <TableCell>
+                                {(
+                                  versionHitsMap.get(tagName) ?? 0
+                                ).toLocaleString()}
+                              </TableCell>
+                              <TableCell>
+                                {tagName.includes("beta")
+                                  ? "beta"
+                                  : tagName.includes("alpha")
+                                    ? "alpha"
+                                    : "latest"}
+                              </TableCell>
+                            </TableRow>
+                          ))
+                      : Object.entries(
+                          (metadata as NpmPackageMetadata).tags || {}
+                        ).map(([tag, version]) => (
+                          <TableRow key={tag}>
+                            <TableCell>{version}</TableCell>
+                            <TableCell>
+                              {(
+                                versionHitsMap.get(version) ?? 0
+                              ).toLocaleString()}
+                            </TableCell>
+                            <TableCell>{tag}</TableCell>
+                          </TableRow>
+                        ))}
+                  </TableBody>
+                </Table>
+              </div>
             </CardContent>
           </Card>
           <Card>
@@ -325,47 +383,73 @@ function PackageDetails() {
               <CardTitle>Version history</CardTitle>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Version</TableHead>
-                    <TableHead>Downloads (Last 7 days)</TableHead>
-                    <TableHead>Published</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {type === "npm" &&
-                    metadata.versions?.map((version) => {
-                      const publishDateStr = npmData?.time?.[version];
-                      const publishDate = publishDateStr
-                        ? new Date(publishDateStr)
-                        : null;
-                      const relative = publishDate
-                        ? relativeDate(publishDate, now)
-                        : "Unknown";
-                      return (
-                        <TableRow key={version}>
-                          <TableCell>{version}</TableCell>
-                          <TableCell>
-                            {(
-                              versionHitsMap.get(version) ?? 0
-                            ).toLocaleString()}
-                          </TableCell>
-                          <TableCell>{relative}</TableCell>
-                        </TableRow>
-                      );
-                    })}
-                </TableBody>
-              </Table>
+              <div className="overflow-hidden rounded-md border">
+                <Table>
+                  <TableHeader className="bg-table-header-bg">
+                    <TableRow>
+                      <TableHead>Version</TableHead>
+                      <TableHead>Hits</TableHead>
+                      <TableHead>Published</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {isGh
+                      ? weekStats?.map((versionStat: PackageVersionStat) => {
+                          const tagName = versionStat.version;
+                          const tagData = (metadata as GhPackageMetadata)
+                            .tags?.[tagName];
+                          const publishDate = tagData
+                            ? new Date(tagData.commit.date)
+                            : null;
+                          const relative = publishDate
+                            ? relativeDate(publishDate)
+                            : "Unknown";
+
+                          return (
+                            <TableRow key={tagName}>
+                              <TableCell>{tagName}</TableCell>
+                              <TableCell>
+                                {versionStat.hits.total.toLocaleString()}
+                              </TableCell>
+                              <TableCell>{relative}</TableCell>
+                            </TableRow>
+                          );
+                        })
+                      : (metadata as NpmPackageMetadata).versions?.map(
+                          (version) => {
+                            const publishDateStr = npmData?.time?.[version];
+                            const publishDate = publishDateStr
+                              ? new Date(publishDateStr)
+                              : null;
+                            const relative = publishDate
+                              ? relativeDate(publishDate)
+                              : "Unknown";
+                            return (
+                              <TableRow key={version}>
+                                <TableCell>{version}</TableCell>
+                                <TableCell>
+                                  {(
+                                    versionHitsMap.get(version) ?? 0
+                                  ).toLocaleString()}
+                                </TableCell>
+                                <TableCell>{relative}</TableCell>
+                              </TableRow>
+                            );
+                          }
+                        )}
+                  </TableBody>
+                </Table>
+              </div>
             </CardContent>
           </Card>
         </div>
-        <Card>
+        <Card className="max-h-max">
           <CardHeader>
-            <CardTitle>Package Downloads</CardTitle>
+            <CardTitle className="text-lg">Package Downloads</CardTitle>
+            <CardDescription>Last 30 days</CardDescription>
           </CardHeader>
           <CardContent>
-            <ChartContainer config={{}} className="h-[300px] w-full">
+            <ChartContainer config={chartConfig} className="h-[300px] w-full">
               <AreaChart data={chartData}>
                 <CartesianGrid vertical={false} />
                 <XAxis
@@ -373,24 +457,38 @@ function PackageDetails() {
                   tickLine={false}
                   axisLine={false}
                   tickMargin={8}
+                  tickFormatter={(value) => dayjs(value).format("MMM D")}
+                />
+                <YAxis
+                  tickFormatter={(value) =>
+                    compactNumberFormatter.format(value as number)
+                  }
                 />
                 <ChartTooltip
                   cursor={false}
-                  content={<ChartTooltipContent indicator="dot" />}
+                  content={
+                    <ChartTooltipContent
+                      indicator="dot"
+                      formatter={(value: ValueType) =>
+                        compactNumberFormatter.format(Number(value))
+                      }
+                    />
+                  }
                 />
+                <ChartLegend />
                 <Area
                   dataKey="hits"
                   type="natural"
-                  fill="#8884d8"
+                  fill="var(--color-hits)"
                   fillOpacity={0.4}
-                  stroke="#8884d8"
+                  stroke="var(--color-hits)"
                 />
                 <Area
-                  dataKey="bandwidth"
+                  dataKey="bandwidthInGB"
                   type="natural"
-                  fill="#82ca9d"
+                  fill="var(--color-bandwidthInGB)"
                   fillOpacity={0.4}
-                  stroke="#82ca9d"
+                  stroke="var(--color-bandwidthInGB)"
                 />
               </AreaChart>
             </ChartContainer>
