@@ -28,4 +28,9 @@ I chose to use **Local Storage** for this project because it's the simplest and 
 
 ## AI Tooling
 
-This project was developed with the assistance of an AI programming assistant. The assistant helped with boilerplate code generation, debugging, and providing suggestions for implementation details.
+This project was developed with the assistance of Cursor IDE. The assistant helped with boilerplate code generation, debugging, and providing suggestions for implementation details.
+
+## Note for the evaluator
+
+- The design is not an exact replica of the Figma file provided, as dev mode was not available, which limited access to exact design specifications like font sizes.
+- The search and file directory functionalities were not implemented due to the lack of appropriate APIs and time constraints.

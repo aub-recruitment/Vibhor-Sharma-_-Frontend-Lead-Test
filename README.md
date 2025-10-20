@@ -1,5 +1,7 @@
 # GitHub Package Stats Dashboard
 
+[Architecture decisions and setup instructions can be found in `Architecture.md`](./Architecture.md)
+
 ## Objective
 
 Build a web/mobile app (_based on your job role_) for GitHub Package Stats Dashboard to allow a user to check the details of popular packages on GitHub. You're encouraged to use tools like Cursor or GitHub Copilot. But your solution should show architectural decision-making and thoughtful UI/UX integration.

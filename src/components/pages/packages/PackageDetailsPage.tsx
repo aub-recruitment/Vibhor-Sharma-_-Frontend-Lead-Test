@@ -1,4 +1,4 @@
-import { createLazyFileRoute, useSearch } from "@tanstack/react-router";
+import { useSearch, useParams } from "@tanstack/react-router";
 import { Book, Heart, Share2 } from "lucide-react";
 import { useApiQuery } from "@/hooks/useApiQuery";
 import { Button } from "@/components/ui/button";
@@ -121,10 +121,6 @@ function relativeDate(past: Date): string {
   return dayjs(past).fromNow();
 }
 
-export const Route = createLazyFileRoute("/packages/$packageName")({
-  component: PackageDetails
-});
-
 const chartConfig = {
   hits: {
     label: "Hits",
@@ -141,8 +137,8 @@ const compactNumberFormatter = new Intl.NumberFormat("en-US", {
   compactDisplay: "short"
 });
 
-function PackageDetails() {
-  const { packageName } = Route.useParams();
+export function PackageDetailsPage() {
+  const { packageName } = useParams({ from: "/packages/$packageName" });
   const search = useSearch({ from: "/packages/$packageName" });
 
   const type = search?.type || "npm";

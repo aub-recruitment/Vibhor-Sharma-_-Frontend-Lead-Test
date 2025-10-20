@@ -12,11 +12,9 @@ import { createFileRoute } from '@tanstack/react-router'
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as PackagesPackageNameRouteImport } from './routes/packages/$packageName'
 
 const PackagesIndexLazyRouteImport = createFileRoute('/packages/')()
-const PackagesPackageNameLazyRouteImport = createFileRoute(
-  '/packages/$packageName',
-)()
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -30,28 +28,26 @@ const PackagesIndexLazyRoute = PackagesIndexLazyRouteImport.update({
 } as any).lazy(() =>
   import('./routes/packages/index.lazy').then((d) => d.Route),
 )
-const PackagesPackageNameLazyRoute = PackagesPackageNameLazyRouteImport.update({
+const PackagesPackageNameRoute = PackagesPackageNameRouteImport.update({
   id: '/packages/$packageName',
   path: '/packages/$packageName',
   getParentRoute: () => rootRouteImport,
-} as any).lazy(() =>
-  import('./routes/packages/$packageName.lazy').then((d) => d.Route),
-)
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/packages/$packageName': typeof PackagesPackageNameLazyRoute
+  '/packages/$packageName': typeof PackagesPackageNameRoute
   '/packages': typeof PackagesIndexLazyRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/packages/$packageName': typeof PackagesPackageNameLazyRoute
+  '/packages/$packageName': typeof PackagesPackageNameRoute
   '/packages': typeof PackagesIndexLazyRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/packages/$packageName': typeof PackagesPackageNameLazyRoute
+  '/packages/$packageName': typeof PackagesPackageNameRoute
   '/packages/': typeof PackagesIndexLazyRoute
 }
 export interface FileRouteTypes {
@@ -64,7 +60,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  PackagesPackageNameLazyRoute: typeof PackagesPackageNameLazyRoute
+  PackagesPackageNameRoute: typeof PackagesPackageNameRoute
   PackagesIndexLazyRoute: typeof PackagesIndexLazyRoute
 }
 
@@ -88,7 +84,7 @@ declare module '@tanstack/react-router' {
       id: '/packages/$packageName'
       path: '/packages/$packageName'
       fullPath: '/packages/$packageName'
-      preLoaderRoute: typeof PackagesPackageNameLazyRouteImport
+      preLoaderRoute: typeof PackagesPackageNameRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -96,7 +92,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  PackagesPackageNameLazyRoute: PackagesPackageNameLazyRoute,
+  PackagesPackageNameRoute: PackagesPackageNameRoute,
   PackagesIndexLazyRoute: PackagesIndexLazyRoute,
 }
 export const routeTree = rootRouteImport
